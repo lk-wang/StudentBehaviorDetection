@@ -106,7 +106,7 @@ class VideoProcessor:
             text_list.append(
                 cvcuda.Label(
                     utf8Text = '{}: {}'.format(self.classes[classIndex],str(float(score.amax().cpu().numpy()) * 100)[0:5] + '%'),
-                    fontSize = 1,
+                    fontSize = 6,
                     tlPos = (labelX,labelY),
                     fontColor = (255,255,255),
                     bgColor = tuple(self.colorPalette[classIndex].tolist())
