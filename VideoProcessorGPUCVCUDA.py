@@ -8,7 +8,7 @@ from torch2trt import TRTModule
 import cv2
 class VideoProcessor:
     def __init__(self) -> None: 
-        self.config = yaml.load(open("../gpupipe/config/data.yaml"), Loader=yaml.FullLoader)
+        self.config = yaml.load(open("../gpupipe/config/demo.yaml"), Loader=yaml.FullLoader)
         self.modelName = self.config['modelName']
         self.modelVersion = self.config['modelVersion']
         self.inputName = self.config['inputName']
@@ -24,7 +24,7 @@ class VideoProcessor:
         self.fpsTimer = datetime.now()
         # Initalize TensorRT Engine
         self.logger = trt.Logger(trt.Logger.INFO)
-        with open("../gpupipe/model/best.engine","rb") as f, trt.Runtime(self.logger) as runtime:
+        with open("../gpupipe/model/yolov8l.engine","rb") as f, trt.Runtime(self.logger) as runtime:
             self.engine = runtime.deserialize_cuda_engine(f.read())
         self.TRTNet = TRTModule(input_names=[self.inputName],output_names=[self.outputName],engine=self.engine)
     def preprocess(self,imageFrame):
@@ -40,59 +40,14 @@ class VideoProcessor:
         imageData = imageData.transpose(0,2).transpose(1,2).cpu().numpy()
         imageData = np.expand_dims(imageData,axis=0).astype(np.float32)
         return imageData
-    def CUDARender(
-        self,
-        inputFrame:np.ndarray,
-        nms_masks:torch.Tensor,
-        bbox:torch.Tensor,
-        classIndex:torch.Tensor,
-        score:torch.Tensor
-    ):
-        if isinstance(inputFrame,np.ndarray):
-            frame_hwc = cvcuda.as_tensor(
-                torch.as_tensor(inputFrame).cuda(),
-                "HWC"
-            )
-        bounding_boxes_list = []
-        label_text_list = []
-        for current_boxes,current_masks,current_class_id,current_score in zip(bbox,nms_masks,classIndex,score):
-            filtered_boxes = current_boxes[current_masks]
-            # Save the count of non-zero bounding boxes of the image
-            bounding_boxes = []
-            label_text = []
-
-            for box in filtered_boxes:
-                bounding_boxes.append(
-                    cvcuda.BndBoxI(
-                        box = tuple(box),
-                        thickness = 2,
-                        borderColor = tuple(self.colorPalette[current_class_id]),
-                        fillColor = (0,0,0,0)
-                    )
-                )
-                label_text.append(
-                    cvcuda.Label(
-                        utf8Text = '{}: {}'.format(self.classes[current_class_id],str(float(current_score.amax().cpu().numpy()) * 100)[0:5] + '%'),
-                        fontSize = 1,
-                        tlPos = (int(box[0]),int(box[1])),
-                        fontColor = (255,255,255),
-                        bgColor = tuple(self.colorPalette[current_class_id].tolist())
-                    )
-                )
-            bounding_boxes_list.append(bounding_boxes)
-            label_text_list.append(label_text)
-        
-        batch_bounding_boxes = cvcuda.Elements(elements=bounding_boxes_list)
-        batch_label_text = cvcuda.Elements(elements=label_text_list)
-
-        cvcuda.osd_into(frame_hwc,frame_hwc,batch_bounding_boxes)
-        cvcuda.osd_into(frame_hwc,frame_hwc,batch_label_text)
-
-        # Copy frame_hwc to ndarray
-        inputFrame = torch.as_tensor(frame_hwc.cuda()).cpu().numpy()
-        return inputFrame
 
     def postProcess(self,inputFrame,output):
+
+        frame_hwc = cvcuda.as_tensor(
+            torch.as_tensor(inputFrame).cuda(),
+            "HWC"
+        )
+
         output = torch.transpose(torch.squeeze(output),0,1).cuda()
         x_factor = self.imageWidth / self.inputWidth
         y_factor = self.imageHeight / self.inputHeight
@@ -127,14 +82,46 @@ class VideoProcessor:
             nms_masks.cuda(),device="cuda",dtype=torch.bool
         )
 
-        # Render the bounding boxes
-        outputFrame = self.CUDARender(
-            inputFrame,
-            nms_masks_pyt,
-            boxes,
-            class_ids,
-            scores
-        )
+        # Convert back boxes and scores into it's original shape
+        boxes = boxes.reshape(-1,4)
+        scores = scores.reshape(-1)
+
+        indices = torch.where(nms_masks_pyt == 1)[1].cpu().numpy()
+
+        bbox_list,text_list = [],[]
+        
+        for i in indices:
+            box = boxes[i]
+            score = scores[i]
+            classIndex = class_ids[i]
+            bbox_list.append(
+                cvcuda.BndBoxI(
+                    box = tuple(box),
+                    thickness = 2,
+                    borderColor = tuple(self.colorPalette[classIndex].tolist()),
+                    fillColor = (0,0,0,0)
+                )
+            )
+            labelX = box[0]
+            labelY = box[1] - 10 if box[1] - 10 > 10 else box[1] + 10
+            text_list.append(
+                cvcuda.Label(
+                    utf8Text = '{}: {}'.format(self.classes[classIndex],str(float(score.amax().cpu().numpy()) * 100)[0:5] + '%'),
+                    fontSize = 1,
+                    tlPos = (labelX,labelY),
+                    fontColor = (255,255,255),
+                    bgColor = tuple(self.colorPalette[classIndex].tolist())
+                )
+            )
+
+        # Draw the bounding boxes and labels on the image
+        batch_bounding_boxes = cvcuda.Elements(elements=[bbox_list])
+        batch_text = cvcuda.Elements(elements=[text_list])
+
+        cvcuda.osd_into(frame_hwc,frame_hwc,batch_bounding_boxes)
+        cvcuda.osd_into(frame_hwc,frame_hwc,batch_text)
+
+        outputFrame = torch.as_tensor(frame_hwc.cuda(),device="cuda").cpu().numpy()
 
         # calculate the FPS
         self.fpsCounter += 1

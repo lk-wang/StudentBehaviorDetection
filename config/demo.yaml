@@ -84,8 +84,8 @@ modelName : demo
 modelVersion : '1'
 inputName : images
 outputName : output0
-confidenceThreshold : 0.7
-iouThreshold : 0.7
+confidenceThreshold : 0.5
+iouThreshold : 0.5
 inputWidth : 640
 inputHeight : 640
 serverHost: localhost
