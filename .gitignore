@@ -1,0 +1,4 @@
+*.jpg
+demo_cvcuda.py
+recordings/
+model/
