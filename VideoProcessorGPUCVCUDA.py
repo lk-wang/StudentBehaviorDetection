@@ -37,8 +37,7 @@ class VideoProcessor:
         # convert torch tensor to numpy array
         imageData = torch.as_tensor(imageTensor.cuda(),device="cuda")
         imageData = imageData / 255.0
-        imageData = imageData.transpose(0,2).transpose(1,2).cpu().numpy()
-        imageData = np.expand_dims(imageData,axis=0).astype(np.float32)
+        imageData = imageData.transpose(0,2).transpose(1,2).unsqueeze(0)
         return imageData
 
     def postProcess(self,inputFrame,output):
@@ -135,9 +134,8 @@ class VideoProcessor:
         # draw current time on the top right of frame
         cv2.putText(outputFrame, datetime.now().strftime("%Y %I:%M:%S%p"), (self.imageWidth - 150, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255),1, cv2.LINE_AA)
         return outputFrame
-    def inference(self,frame):
-        frame = torch.from_numpy(frame).cuda()
-        return self.TRTNet(frame)[0]
+    def inference(self,processedFrame):
+        return self.TRTNet(processedFrame)
     def processing(self,frame):
         image_data = self.preprocess(frame)
         output = self.inference(image_data)
